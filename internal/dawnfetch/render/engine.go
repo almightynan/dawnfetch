@@ -20,6 +20,11 @@ const (
 	stackCompactWidth = 72
 	stackTinyWidth    = 50
 	windowsWidthBoost = 8
+
+	colorLevelNone = iota
+	colorLevelANSI16
+	colorLevelANSI256
+	colorLevelTrueColor
 )
 
 var ansiStripRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
@@ -37,6 +42,7 @@ func Print(fields []core.Field, cfg core.BrandConfig, style core.StyleConfig, th
 	if len(palette) == 0 {
 		palette = []string{"37"}
 	}
+	palette, noColor = PreparePaletteForTerminal(palette, noColor)
 
 	terminalW := terminalWidth()
 	labelWidth := labelWidth(fields)
@@ -482,7 +488,7 @@ func labelPaletteColors(palette []string, noColor bool) (string, string) {
 func isDefaultLikeWhite(code string) bool {
 	c := strings.ReplaceAll(strings.TrimSpace(code), " ", "")
 	switch c {
-	case "37", "97", "39", "38;2;255;255;255":
+	case "37", "97", "39", "38;2;255;255;255", "38;5;15", "38;5;231":
 		return true
 	default:
 		return false
@@ -758,6 +764,137 @@ func colorLine(code string, noColor bool, s string) string {
 		return s
 	}
 	return "\x1b[" + code + "m" + s + "\x1b[0m"
+}
+
+func terminalColorLevel() int {
+	if os.Getenv("NO_COLOR") != "" {
+		return colorLevelNone
+	}
+	force := strings.TrimSpace(os.Getenv("CLICOLOR_FORCE"))
+	forceEnabled := force != "" && force != "0"
+	if v := strings.TrimSpace(os.Getenv("CLICOLOR")); v == "0" && !forceEnabled {
+		return colorLevelNone
+	}
+	term := strings.ToLower(strings.TrimSpace(os.Getenv("TERM")))
+	colorterm := strings.ToLower(strings.TrimSpace(os.Getenv("COLORTERM")))
+
+	if strings.Contains(colorterm, "truecolor") || strings.Contains(colorterm, "24bit") ||
+		strings.Contains(term, "truecolor") || strings.Contains(term, "24bit") {
+		return colorLevelTrueColor
+	}
+	if strings.Contains(term, "256color") {
+		return colorLevelANSI256
+	}
+	if term == "" || term == "dumb" {
+		if forceEnabled {
+			return colorLevelANSI16
+		}
+		return colorLevelNone
+	}
+	return colorLevelANSI16
+}
+
+func normalizePaletteForColorLevel(palette []string, level int) []string {
+	if level >= colorLevelTrueColor {
+		return palette
+	}
+	out := make([]string, 0, len(palette))
+	for _, code := range palette {
+		out = append(out, normalizeColorCode(code, level))
+	}
+	return out
+}
+
+func normalizeColorCode(code string, level int) string {
+	c := strings.ReplaceAll(strings.TrimSpace(code), " ", "")
+	if c == "" {
+		return "37"
+	}
+	r, g, b, ok := parseTrueColorCode(c)
+	if !ok {
+		return c
+	}
+	if level == colorLevelANSI256 {
+		return fmt.Sprintf("38;5;%d", rgbToANSI256(r, g, b))
+	}
+	return strconv.Itoa(rgbToANSI16(r, g, b))
+}
+
+func parseTrueColorCode(code string) (int, int, int, bool) {
+	parts := strings.Split(code, ";")
+	if len(parts) != 5 || parts[0] != "38" || parts[1] != "2" {
+		return 0, 0, 0, false
+	}
+	r, errR := strconv.Atoi(parts[2])
+	g, errG := strconv.Atoi(parts[3])
+	b, errB := strconv.Atoi(parts[4])
+	if errR != nil || errG != nil || errB != nil {
+		return 0, 0, 0, false
+	}
+	return clamp255(r), clamp255(g), clamp255(b), true
+}
+
+func clamp255(v int) int {
+	if v < 0 {
+		return 0
+	}
+	if v > 255 {
+		return 255
+	}
+	return v
+}
+
+func rgbToANSI256(r, g, b int) int {
+	if r == g && g == b {
+		if r < 8 {
+			return 16
+		}
+		if r > 248 {
+			return 231
+		}
+		return 232 + ((r-8)*24+123)/247
+	}
+	ri := (r*5 + 127) / 255
+	gi := (g*5 + 127) / 255
+	bi := (b*5 + 127) / 255
+	return 16 + (36 * ri) + (6 * gi) + bi
+}
+
+func rgbToANSI16(r, g, b int) int {
+	ansi16 := [16][3]int{
+		{0, 0, 0},
+		{205, 0, 0},
+		{0, 205, 0},
+		{205, 205, 0},
+		{0, 0, 238},
+		{205, 0, 205},
+		{0, 205, 205},
+		{229, 229, 229},
+		{127, 127, 127},
+		{255, 0, 0},
+		{0, 255, 0},
+		{255, 255, 0},
+		{92, 92, 255},
+		{255, 0, 255},
+		{0, 255, 255},
+		{255, 255, 255},
+	}
+	bestIdx := 7
+	bestDist := int(^uint(0) >> 1)
+	for i, c := range ansi16 {
+		dr := r - c[0]
+		dg := g - c[1]
+		db := b - c[2]
+		dist := dr*dr + dg*dg + db*db
+		if dist < bestDist {
+			bestDist = dist
+			bestIdx = i
+		}
+	}
+	if bestIdx < 8 {
+		return 30 + bestIdx
+	}
+	return 90 + (bestIdx - 8)
 }
 
 func padRightStyled(styled string, raw string, width int) string {

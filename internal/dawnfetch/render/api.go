@@ -3,6 +3,17 @@ package render
 
 import "dawnfetch/internal/dawnfetch/core"
 
+func PreparePaletteForTerminal(palette []string, noColor bool) ([]string, bool) {
+	if noColor {
+		return palette, true
+	}
+	level := terminalColorLevel()
+	if level == colorLevelNone {
+		return palette, true
+	}
+	return normalizePaletteForColorLevel(palette, level), false
+}
+
 func RenderInfoLines(fields []core.Field, style core.StyleConfig, labelWidth int, valueWidth int, palette []string, noColor bool) []core.RenderedLine {
 	return renderInfoLines(fields, style, labelWidth, valueWidth, palette, noColor)
 }

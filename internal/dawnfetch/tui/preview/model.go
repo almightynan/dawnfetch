@@ -439,6 +439,7 @@ func buildThemePreviewLines(theme string, palette []string, fields []core.Field,
 	if maxHeight < 8 {
 		maxHeight = 8
 	}
+	palette, noColor = render.PreparePaletteForTerminal(palette, noColor)
 
 	style := core.DefaultStyleConfig()
 	style.Layout.LogoLeftPadding = 1
