@@ -27,6 +27,8 @@ type windowsFactsData struct {
 	ResHz             int      `json:"resHz"`
 	MemTotalKB        int64    `json:"memTotalKB"`
 	MemFreeKB         int64    `json:"memFreeKB"`
+	PageTotalMB       int64    `json:"pageTotalMB"`
+	PageUsedMB        int64    `json:"pageUsedMB"`
 	DiskTotalB        int64    `json:"diskTotalB"`
 	DiskFreeB         int64    `json:"diskFreeB"`
 	DiskFS            string   `json:"diskFS"`
@@ -47,10 +49,11 @@ func windowsFacts() windowsFactsData {
 		"$cs=Get-CimInstance Win32_ComputerSystem; " +
 		"$cpu=Get-CimInstance Win32_Processor | Select-Object -First 1; " +
 		"$gpu=Get-CimInstance Win32_VideoController; " +
+		"$page=Get-CimInstance Win32_PageFileUsage; " +
 		"$sysDrive=$env:SystemDrive; if([string]::IsNullOrWhiteSpace($sysDrive)){$sysDrive='C:'}; " +
 		"$drive=Get-CimInstance Win32_LogicalDisk -Filter (\"DeviceID='\"+$sysDrive+\"'\"); " +
 		"$theme=(Get-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize' -Name AppsUseLightTheme -ErrorAction SilentlyContinue).AppsUseLightTheme; " +
-		"$obj=[ordered]@{caption=[string]$os.Caption;version=[string]$os.Version;build=[string]$os.BuildNumber;lastBoot=[string]$os.LastBootUpTime;manufacturer=[string]$cs.Manufacturer;model=[string]$cs.Model;arch=[string]$os.OSArchitecture;cpuName=[string]$cpu.Name;cpuCores=$(if($cpu.NumberOfCores){[int]$cpu.NumberOfCores}else{0});cpuThreads=$(if($cpu.NumberOfLogicalProcessors){[int]$cpu.NumberOfLogicalProcessors}else{0});cpuMHz=$(if($cpu.MaxClockSpeed){[int]$cpu.MaxClockSpeed}else{0});gpuNames=@($gpu|ForEach-Object{[string]$_.Name}|Where-Object{$_}|Select-Object -Unique);resX=$(if(($gpu|Select-Object -First 1).CurrentHorizontalResolution){[int](($gpu|Select-Object -First 1).CurrentHorizontalResolution)}else{0});resY=$(if(($gpu|Select-Object -First 1).CurrentVerticalResolution){[int](($gpu|Select-Object -First 1).CurrentVerticalResolution)}else{0});resHz=$(if(($gpu|Select-Object -First 1).CurrentRefreshRate){[int](($gpu|Select-Object -First 1).CurrentRefreshRate)}else{0});memTotalKB=$(if($os.TotalVisibleMemorySize){[int64]$os.TotalVisibleMemorySize}else{0});memFreeKB=$(if($os.FreePhysicalMemory){[int64]$os.FreePhysicalMemory}else{0});diskTotalB=$(if($drive.Size){[int64]$drive.Size}else{0});diskFreeB=$(if($drive.FreeSpace){[int64]$drive.FreeSpace}else{0});diskFS=[string]$drive.FileSystem;locale=[string]$os.Locale;theme=$(if($null -eq $theme){-1}else{[int]$theme})}; " +
+		"$obj=[ordered]@{caption=[string]$os.Caption;version=[string]$os.Version;build=[string]$os.BuildNumber;lastBoot=[string]$os.LastBootUpTime;manufacturer=[string]$cs.Manufacturer;model=[string]$cs.Model;arch=[string]$os.OSArchitecture;cpuName=[string]$cpu.Name;cpuCores=$(if($cpu.NumberOfCores){[int]$cpu.NumberOfCores}else{0});cpuThreads=$(if($cpu.NumberOfLogicalProcessors){[int]$cpu.NumberOfLogicalProcessors}else{0});cpuMHz=$(if($cpu.MaxClockSpeed){[int]$cpu.MaxClockSpeed}else{0});gpuNames=@($gpu|ForEach-Object{[string]$_.Name}|Where-Object{$_}|Select-Object -Unique);resX=$(if(($gpu|Select-Object -First 1).CurrentHorizontalResolution){[int](($gpu|Select-Object -First 1).CurrentHorizontalResolution)}else{0});resY=$(if(($gpu|Select-Object -First 1).CurrentVerticalResolution){[int](($gpu|Select-Object -First 1).CurrentVerticalResolution)}else{0});resHz=$(if(($gpu|Select-Object -First 1).CurrentRefreshRate){[int](($gpu|Select-Object -First 1).CurrentRefreshRate)}else{0});memTotalKB=$(if($os.TotalVisibleMemorySize){[int64]$os.TotalVisibleMemorySize}else{0});memFreeKB=$(if($os.FreePhysicalMemory){[int64]$os.FreePhysicalMemory}else{0});pageTotalMB=$(if($page){[int64](($page|Measure-Object -Property AllocatedBaseSize -Sum).Sum)}else{0});pageUsedMB=$(if($page){[int64](($page|Measure-Object -Property CurrentUsage -Sum).Sum)}else{0});diskTotalB=$(if($drive.Size){[int64]$drive.Size}else{0});diskFreeB=$(if($drive.FreeSpace){[int64]$drive.FreeSpace}else{0});diskFS=[string]$drive.FileSystem;locale=[string]$os.Locale;theme=$(if($null -eq $theme){-1}else{[int]$theme})}; " +
 		"$obj | ConvertTo-Json -Compress -Depth 4"
 
 	out, err := runCmd(2200*time.Millisecond, "powershell", "-NoProfile", "-Command", ps)

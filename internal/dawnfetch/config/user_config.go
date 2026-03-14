@@ -13,6 +13,7 @@ import (
 type UserConfig struct {
 	DefaultTheme string `json:"default_theme"`
 	Initialized  bool   `json:"initialized"`
+	BoldTitles   *bool  `json:"bold_titles,omitempty"`
 }
 
 const DefaultConfigFileName = "dawnfetch_config.json"

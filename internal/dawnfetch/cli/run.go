@@ -16,7 +16,7 @@ import (
 	"dawnfetch/internal/dawnfetch/tui/onboarding"
 )
 
-var version = "0.1.5"
+var version = "0.1.6"
 
 func Run() int {
 	args := os.Args
@@ -120,6 +120,15 @@ func Run() int {
 	skipPaletteLoad := nonInteractiveFast &&
 		strings.TrimSpace(*themeName) == "" &&
 		strings.TrimSpace(*themesPath) == "themes.json"
+	var userCfg config.UserConfig
+	if !nonInteractiveFast {
+		cfg, err := config.LoadUserConfig()
+		if err != nil {
+			printCLIError(fmt.Sprintf("failed to load user config: %v", err), "")
+			return 1
+		}
+		userCfg = cfg
+	}
 	if !skipPaletteLoad {
 		if palettes, err := config.LoadThemePalettes(*themesPath); err == nil {
 			brandCfg.Palettes = palettes
@@ -130,6 +139,9 @@ func Run() int {
 	}
 
 	styleCfg := core.DefaultStyleConfig()
+	if userCfg.BoldTitles != nil {
+		styleCfg.Fields.BoldTitles = *userCfg.BoldTitles
+	}
 	if *noLogo {
 		styleCfg.Layout.ShowLogo = false
 	}
@@ -142,12 +154,7 @@ func Run() int {
 		if skipPaletteLoad {
 			effectiveTheme = core.DefaultPalette
 		} else {
-			cfg, err := config.LoadUserConfig()
-			if err != nil {
-				printCLIError(fmt.Sprintf("failed to load user config: %v", err), "")
-				return 1
-			}
-			if t := strings.TrimSpace(cfg.DefaultTheme); t != "" {
+			if t := strings.TrimSpace(userCfg.DefaultTheme); t != "" {
 				effectiveTheme = t
 			} else {
 				effectiveTheme = core.DefaultPalette

@@ -349,6 +349,7 @@ func renderInfoLines(fields []core.Field, style core.StyleConfig, labelWidth int
 	colorEnabled := !noColor && len(palette) > 0
 	colorizeFields := colorEnabled && style.Fields.Colorize
 	colorizeLabels := colorEnabled && style.Fields.ColorizeLabels
+	boldTitles := !noColor && style.Fields.BoldTitles
 	labelColor, accentColor := labelPaletteColors(palette, noColor)
 	for i, f := range fields {
 		value := f.Value
@@ -364,13 +365,13 @@ func renderInfoLines(fields []core.Field, style core.StyleConfig, labelWidth int
 		}
 		color := palette[i%len(palette)]
 		if colorizeFields {
-			out = append(out, core.RenderedLine{Raw: raw, Styled: colorLine(color, false, raw)})
+			out = append(out, core.RenderedLine{Raw: raw, Styled: styleSpan(color, false, boldTitles, raw)})
 			continue
 		}
 		styledLabel := labelText
 		styledSep := separatorText
-		if labelColor != "" {
-			styledLabel = colorLine(labelColor, false, labelText)
+		if labelColor != "" || boldTitles {
+			styledLabel = styleSpan(labelColor, false, boldTitles, labelText)
 		}
 		if accentColor != "" {
 			styledSep = colorLine(accentColor, false, separatorText)
@@ -395,11 +396,15 @@ func renderUserHostLines(style core.StyleConfig, palette []string, noColor bool)
 	out := make([]core.RenderedLine, 0, 2)
 	labelColor, accentColor := labelPaletteColors(palette, noColor)
 	if labelColor == "" || (!style.Fields.Colorize && !style.Fields.ColorizeLabels) {
-		out = append(out, core.RenderedLine{Raw: identity, Styled: identity})
+		if !noColor && style.Fields.BoldTitles {
+			out = append(out, core.RenderedLine{Raw: identity, Styled: styleSpan("", false, true, identity)})
+		} else {
+			out = append(out, core.RenderedLine{Raw: identity, Styled: identity})
+		}
 	} else {
 		out = append(out, core.RenderedLine{
 			Raw:    identity,
-			Styled: colorizeIdentity(identity, labelColor, accentColor),
+			Styled: colorizeIdentity(identity, labelColor, accentColor, !noColor && style.Fields.BoldTitles),
 		})
 	}
 	if style.Text.ShowUserHostBar {
@@ -495,17 +500,24 @@ func isDefaultLikeWhite(code string) bool {
 	}
 }
 
-func colorizeIdentity(identity, labelColor, accentColor string) string {
+func colorizeIdentity(identity, labelColor, accentColor string, bold bool) string {
 	_ = accentColor
 	at := strings.Index(identity, "@")
 	if at < 0 || labelColor == "" {
+		if bold {
+			return styleSpan("", false, true, identity)
+		}
 		return identity
 	}
 	left := identity[:at]
 	right := identity[at+1:]
-	return colorLine(labelColor, false, left) +
-		"@" +
-		colorLine(labelColor, false, right)
+	atText := "@"
+	if bold {
+		atText = styleSpan("", false, true, "@")
+	}
+	return styleSpan(labelColor, false, bold, left) +
+		atText +
+		styleSpan(labelColor, false, bold, right)
 }
 
 func renderFreeLines(lines []string, style core.StyleConfig, palette []string, noColor bool, width int) []core.RenderedLine {
@@ -760,10 +772,24 @@ func terminalWidth() int {
 }
 
 func colorLine(code string, noColor bool, s string) string {
+	return styleSpan(code, noColor, false, s)
+}
+
+func styleSpan(code string, noColor bool, bold bool, s string) string {
 	if noColor {
 		return s
 	}
-	return "\x1b[" + code + "m" + s + "\x1b[0m"
+	parts := make([]string, 0, 2)
+	if bold {
+		parts = append(parts, "1")
+	}
+	if strings.TrimSpace(code) != "" {
+		parts = append(parts, code)
+	}
+	if len(parts) == 0 {
+		return s
+	}
+	return "\x1b[" + strings.Join(parts, ";") + "m" + s + "\x1b[0m"
 }
 
 func terminalColorLevel() int {
@@ -777,7 +803,11 @@ func terminalColorLevel() int {
 	}
 	term := strings.ToLower(strings.TrimSpace(os.Getenv("TERM")))
 	colorterm := strings.ToLower(strings.TrimSpace(os.Getenv("COLORTERM")))
+	termProgram := strings.ToLower(strings.TrimSpace(os.Getenv("TERM_PROGRAM")))
 
+	if termProgram == "apple_terminal" {
+		return colorLevelANSI256
+	}
 	if strings.Contains(colorterm, "truecolor") || strings.Contains(colorterm, "24bit") ||
 		strings.Contains(term, "truecolor") || strings.Contains(term, "24bit") {
 		return colorLevelTrueColor
@@ -814,6 +844,12 @@ func normalizeColorCode(code string, level int) string {
 	if !ok {
 		return c
 	}
+	if perceivedLuma(r, g, b) < 44 {
+		if level == colorLevelANSI256 {
+			return "38;5;244"
+		}
+		return "90"
+	}
 	if level == colorLevelANSI256 {
 		return fmt.Sprintf("38;5;%d", rgbToANSI256(r, g, b))
 	}
@@ -842,6 +878,10 @@ func clamp255(v int) int {
 		return 255
 	}
 	return v
+}
+
+func perceivedLuma(r, g, b int) int {
+	return (299*r + 587*g + 114*b) / 1000
 }
 
 func rgbToANSI256(r, g, b int) int {

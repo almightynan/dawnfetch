@@ -78,11 +78,10 @@ func collect(fast bool, full bool) []core.Field {
 	defer fastCollectMode.Store(false)
 	defer windowsSlowProbeMode.Store(false)
 
-	items := defaultCollectors
-	if full {
-		items = fullCollectors
+	items := activeCollectors(full)
+	if len(items) == 0 {
+		return nil
 	}
-
 	fields := make([]core.Field, len(items))
 	var wg sync.WaitGroup
 	wg.Add(len(items))
@@ -100,6 +99,24 @@ func collect(fast bool, full bool) []core.Field {
 	wg.Wait()
 
 	return fields
+}
+
+func activeCollectors(full bool) []fieldCollector {
+	items := defaultCollectors
+	if full {
+		items = fullCollectors
+	}
+	if runtime.GOOS != "windows" {
+		return items
+	}
+	filtered := make([]fieldCollector, 0, len(items))
+	for _, item := range items {
+		if item.label == "Packages" {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered
 }
 
 func Collect(fast bool, full bool) []core.Field {

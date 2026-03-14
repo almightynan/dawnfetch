@@ -73,6 +73,22 @@ dawnfetch --version
 dawnfetch
 ```
 
+Default per-user config paths:
+- Linux: `~/.config/dawnfetch/dawnfetch_config.json`
+- macOS: `~/.config/dawnfetch/dawnfetch_config.json`
+- Windows: `%AppData%\\dawnfetch\\dawnfetch_config.json`
+
+Portable installs may keep `dawnfetch_config.json` beside the binary.
+
+Example:
+
+```json
+{
+  "default_theme": "transgender",
+  "bold_titles": true
+}
+```
+
 ## Build from source
 
 All build scripts output binaries to the repo root `dist/` directory.

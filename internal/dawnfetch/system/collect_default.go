@@ -183,13 +183,37 @@ func uptimeSeconds() int64 {
 
 func packagesCount(fast bool) string {
 	if runtime.GOOS == "windows" {
-		if fast || !windowsSlowProbesEnabled() {
+		return ""
+	}
+
+	if runtime.GOOS == "darwin" {
+		counts := map[string]int{}
+		if count := fastMacPackageCount(); count > 0 {
+			counts["pkgutil"] = count
+		}
+		if count := fastMacBrewCount(); count > 0 {
+			counts["brew"] = count
+		}
+		if len(counts) == 0 && commandExists("pkgutil") {
+			if out, _ := runCmd(800*time.Millisecond, "pkgutil", "--pkgs"); out != "" {
+				counts["pkgutil"] = countLines(out)
+			}
+		}
+		if len(counts) == 0 {
 			return "n/a"
 		}
-		if out, _ := runCmd(1100*time.Millisecond, "powershell", "-NoProfile", "-Command", "(Get-Package | Measure-Object).Count"); out != "" {
-			return "package providers " + strings.TrimSpace(out)
+		keys := make([]string, 0, len(counts))
+		total := 0
+		for k, v := range counts {
+			keys = append(keys, k)
+			total += v
 		}
-		return "n/a"
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			parts = append(parts, fmt.Sprintf("%s %d", k, counts[k]))
+		}
+		return fmt.Sprintf("%d (%s)", total, strings.Join(parts, ", "))
 	}
 
 	if runtime.GOOS == "linux" && fast {
@@ -935,7 +959,18 @@ func memoryInfo() string {
 }
 
 func swapUsageSummary() string {
-	if runtime.GOOS != "linux" {
+	switch runtime.GOOS {
+	case "windows":
+		if used, total, ok := windowsSwapUsage(); ok && total > 0 {
+			pct := int64(0)
+			if total > 0 {
+				pct = (used * 100) / total
+			}
+			return fmt.Sprintf("%s / %s (%d%%)", formatGiB2(used), formatGiB2(total), pct)
+		}
+		return "n/a"
+	case "linux":
+	default:
 		return "n/a"
 	}
 	var totalKB, freeKB int64
@@ -961,6 +996,23 @@ func swapUsageSummary() string {
 }
 
 func diskRootUsageDetailed() string {
+	if runtime.GOOS == "linux" && !linuxHasMultiplePhysicalDisks() {
+		total, free, err := diskUsage("/")
+		if err != nil {
+			return "unknown"
+		}
+		used := total - free
+		pct := int64(0)
+		if total > 0 {
+			pct = (used * 100) / total
+		}
+		fs := rootFSType()
+		if fs == "" {
+			fs = "unknown"
+		}
+		return fmt.Sprintf("%s / %s (%d%%) - %s", formatGiB2(used), formatGiB2(total), pct, fs)
+	}
+
 	if usedAll, totalAll, diskCount, fsAll, ok := aggregateLocalDiskUsage(); ok && diskCount > 1 {
 		pctAll := int64(0)
 		if totalAll > 0 {
@@ -993,6 +1045,111 @@ func diskRootUsageDetailed() string {
 		fs = "unknown"
 	}
 	return fmt.Sprintf("%s / %s (%d%%) - %s", formatGiB2(used), formatGiB2(total), pct, fs)
+}
+
+func fastMacPackageCount() int {
+	entries, err := os.ReadDir("/var/db/receipts")
+	if err != nil {
+		return 0
+	}
+	seen := map[string]struct{}{}
+	for _, entry := range entries {
+		name := strings.TrimSpace(entry.Name())
+		if name == "" || entry.IsDir() {
+			continue
+		}
+		switch filepath.Ext(name) {
+		case ".plist", ".bom":
+			base := strings.TrimSuffix(name, filepath.Ext(name))
+			if base != "" {
+				seen[base] = struct{}{}
+			}
+		}
+	}
+	return len(seen)
+}
+
+func fastMacBrewCount() int {
+	for _, cellar := range []string{"/opt/homebrew/Cellar", "/usr/local/Cellar"} {
+		entries, err := os.ReadDir(cellar)
+		if err != nil {
+			continue
+		}
+		count := 0
+		for _, entry := range entries {
+			if entry.IsDir() {
+				count++
+			}
+		}
+		if count > 0 {
+			return count
+		}
+	}
+	return 0
+}
+
+func windowsSwapUsage() (used int64, total int64, ok bool) {
+	if wf := windowsFacts(); wf.Valid && wf.PageTotalMB > 0 {
+		total = wf.PageTotalMB * 1024 * 1024
+		used = wf.PageUsedMB * 1024 * 1024
+		if used < 0 {
+			used = 0
+		}
+		if used > total {
+			used = total
+		}
+		return used, total, true
+	}
+
+	if commandExists("wmic") {
+		out, _ := runCmd(1200*time.Millisecond, "wmic", "pagefile", "list", "/format:value")
+		if used, total, ok := parseWindowsPagefileWMIC(out); ok {
+			return used, total, true
+		}
+	}
+
+	ps := "$items=Get-CimInstance Win32_PageFileUsage; if($items){$total=($items|Measure-Object -Property AllocatedBaseSize -Sum).Sum; $used=($items|Measure-Object -Property CurrentUsage -Sum).Sum; \"$used,$total\"}"
+	out, _ := runCmd(1600*time.Millisecond, "powershell", "-NoProfile", "-Command", ps)
+	if strings.TrimSpace(out) == "" {
+		return 0, 0, false
+	}
+	parts := strings.Split(strings.TrimSpace(out), ",")
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	usedMB, errUsed := strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 64)
+	totalMB, errTotal := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
+	if errUsed != nil || errTotal != nil || totalMB <= 0 {
+		return 0, 0, false
+	}
+	return usedMB * 1024 * 1024, totalMB * 1024 * 1024, true
+}
+
+func parseWindowsPagefileWMIC(out string) (used int64, total int64, ok bool) {
+	if strings.TrimSpace(out) == "" {
+		return 0, 0, false
+	}
+	var usedMB int64
+	var totalMB int64
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "AllocatedBaseSize=") {
+			v, err := strconv.ParseInt(strings.TrimSpace(strings.TrimPrefix(line, "AllocatedBaseSize=")), 10, 64)
+			if err == nil && v > 0 {
+				totalMB += v
+			}
+		}
+		if strings.HasPrefix(line, "CurrentUsage=") {
+			v, err := strconv.ParseInt(strings.TrimSpace(strings.TrimPrefix(line, "CurrentUsage=")), 10, 64)
+			if err == nil && v >= 0 {
+				usedMB += v
+			}
+		}
+	}
+	if totalMB <= 0 {
+		return 0, 0, false
+	}
+	return usedMB * 1024 * 1024, totalMB * 1024 * 1024, true
 }
 
 func aggregateLocalDiskUsage() (used int64, total int64, diskCount int, fsSummary string, ok bool) {
@@ -1094,6 +1251,32 @@ func aggregateLocalDiskUsage() (used int64, total int64, diskCount int, fsSummar
 	}
 
 	return 0, 0, 0, "", false
+}
+
+func linuxHasMultiplePhysicalDisks() bool {
+	if runtime.GOOS != "linux" {
+		return false
+	}
+	entries, err := os.ReadDir("/sys/block")
+	if err != nil {
+		return true
+	}
+	count := 0
+	for _, entry := range entries {
+		name := strings.TrimSpace(entry.Name())
+		if name == "" {
+			continue
+		}
+		if strings.HasPrefix(name, "loop") || strings.HasPrefix(name, "ram") || strings.HasPrefix(name, "zram") ||
+			strings.HasPrefix(name, "fd") || strings.HasPrefix(name, "sr") || strings.HasPrefix(name, "dm-") {
+			continue
+		}
+		count++
+		if count > 1 {
+			return true
+		}
+	}
+	return false
 }
 
 func dominantFSType(kinds map[string]int) string {

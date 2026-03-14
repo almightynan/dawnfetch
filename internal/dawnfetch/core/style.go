@@ -61,6 +61,7 @@ type StyleFields struct {
 	Suffix         map[string]string
 	Hide           []string
 	Only           []string
+	BoldTitles     bool
 	Colorize       bool
 	ColorizeLabels bool
 }
@@ -118,6 +119,7 @@ func DefaultStyleConfig() StyleConfig {
 			Titles:         map[string]string{},
 			Prefix:         map[string]string{},
 			Suffix:         map[string]string{},
+			BoldTitles:     true,
 			Colorize:       false,
 			ColorizeLabels: true,
 		},
